@@ -64,6 +64,12 @@ export default function AppLayout({ children }) {
                     >
                         Servicios
                     </Link>
+                    <Link
+                        href="/jobs"
+                        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+                    >
+                        Mis jobs
+                    </Link>
 
                     {user?.role === 'admin' && (
                         <>
@@ -82,6 +88,12 @@ export default function AppLayout({ children }) {
                                 className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
                             >
                                 Servicios
+                            </Link>
+                            <Link
+                                href="/admin/jobs"
+                                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+                            >
+                                Jobs
                             </Link>
                         </>
                     )}

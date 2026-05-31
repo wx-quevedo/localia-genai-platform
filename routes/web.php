@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\InvitationController;
+use App\Http\Controllers\JobController;
 use App\Http\Controllers\ServiceController;
+use App\Http\Controllers\Admin\JobController as AdminJobController;
 use App\Http\Controllers\Admin\ServiceController as AdminServiceController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -24,11 +26,21 @@ Route::middleware('auth')->group(function () {
     Route::get('/servicios', [ServiceController::class, 'index'])->name('services.index');
     Route::get('/servicios/{slug}', [ServiceController::class, 'show'])->name('services.show');
 
+    // Jobs de usuario
+    Route::get('/jobs', [JobController::class, 'index'])->name('jobs.index');
+    Route::get('/jobs/{uuid}', [JobController::class, 'show'])->name('jobs.show');
+    Route::post('/servicios/{slug}/lanzar', [JobController::class, 'store'])->name('jobs.store');
+
     // Solo admin
     Route::middleware('admin')->group(function () {
         Route::get('/admin/invitaciones', [InvitationController::class, 'index'])->name('admin.invitaciones');
         Route::post('/admin/invitaciones', [InvitationController::class, 'store']);
         Route::delete('/admin/invitaciones/{id}', [InvitationController::class, 'destroy']);
+    });
+
+    // Admin — jobs
+    Route::middleware('admin')->group(function () {
+        Route::get('/admin/jobs', [AdminJobController::class, 'index'])->name('admin.jobs.index');
     });
 
     // Admin — servicios

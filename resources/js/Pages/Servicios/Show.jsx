@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Head, Link } from '@inertiajs/react'
+import { Head, Link, router } from '@inertiajs/react'
 import AppLayout from '@/Layouts/AppLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,8 +24,7 @@ function FileUploadZone({ input, value, onChange }) {
         if (!file) return
         onChange(file)
         if (input.type === 'image' || input.type === 'video') {
-            const url = URL.createObjectURL(file)
-            setPreview({ url, type: input.type })
+            setPreview({ url: URL.createObjectURL(file), type: input.type })
         } else {
             setPreview({ name: file.name })
         }
@@ -54,29 +53,16 @@ function FileUploadZone({ input, value, onChange }) {
                 }
                 onChange={(e) => handleFile(e.target.files[0])}
             />
-
             {preview ? (
                 <div className="space-y-2">
                     {preview.url && input.type === 'image' && (
-                        <img
-                            src={preview.url}
-                            alt="preview"
-                            className="max-h-40 mx-auto rounded object-contain"
-                        />
+                        <img src={preview.url} alt="preview" className="max-h-40 mx-auto rounded object-contain" />
                     )}
                     {preview.url && input.type === 'video' && (
-                        <video
-                            src={preview.url}
-                            className="max-h-40 mx-auto rounded"
-                            controls
-                        />
+                        <video src={preview.url} className="max-h-40 mx-auto rounded" controls />
                     )}
-                    {preview.name && (
-                        <p className="text-sm font-medium">{preview.name}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                        Haz clic para cambiar el archivo
-                    </p>
+                    {preview.name && <p className="text-sm font-medium">{preview.name}</p>}
+                    <p className="text-xs text-muted-foreground">Haz clic para cambiar el archivo</p>
                 </div>
             ) : (
                 <div className="space-y-1">
@@ -107,11 +93,9 @@ function DynamicInput({ input, value, onChange }) {
             />
         )
     }
-
     if (input.type === 'file' || input.type === 'image' || input.type === 'video') {
         return <FileUploadZone input={input} value={value} onChange={onChange} />
     }
-
     return (
         <Input
             id={input.key}
@@ -125,8 +109,9 @@ function DynamicInput({ input, value, onChange }) {
 
 export default function ServicioShow({ service, inputs }) {
     const [values, setValues] = useState(() =>
-        Object.fromEntries(inputs.map((inp) => [inp.key, '']))
+        Object.fromEntries(inputs.map((inp) => [inp.key, inp.type === 'file' || inp.type === 'image' || inp.type === 'video' ? null : '']))
     )
+    const [processing, setProcessing] = useState(false)
 
     function setValue(key, val) {
         setValues((prev) => ({ ...prev, [key]: val }))
@@ -144,7 +129,26 @@ export default function ServicioShow({ service, inputs }) {
             return
         }
 
-        toast.success('Job en cola — la lógica de procesamiento se implementará en el Módulo 4.')
+        setProcessing(true)
+
+        // Construir FormData para soportar archivos (multipart)
+        const formData = new FormData()
+        inputs.forEach((inp) => {
+            const val = values[inp.key]
+            if (val !== null && val !== undefined && val !== '') {
+                formData.append(inp.key, val)
+            }
+        })
+
+        router.post(`/servicios/${service.slug}/lanzar`, formData, {
+            forceFormData: true,
+            onError: (errors) => {
+                const firstError = Object.values(errors)[0]
+                toast.error(firstError ?? 'Error al enviar el job.')
+                setProcessing(false)
+            },
+            onFinish: () => setProcessing(false),
+        })
     }
 
     return (
@@ -183,9 +187,7 @@ export default function ServicioShow({ service, inputs }) {
                                 <div key={inp.key} className="space-y-1.5">
                                     <Label htmlFor={inp.key}>
                                         {inp.label}
-                                        {inp.required && (
-                                            <span className="text-destructive ml-1">*</span>
-                                        )}
+                                        {inp.required && <span className="text-destructive ml-1">*</span>}
                                     </Label>
                                     <DynamicInput
                                         input={inp}
@@ -204,8 +206,8 @@ export default function ServicioShow({ service, inputs }) {
                                 </p>
                             )}
 
-                            <Button type="submit" className="w-full">
-                                Lanzar job
+                            <Button type="submit" className="w-full" disabled={processing}>
+                                {processing ? 'Enviando job…' : 'Lanzar job'}
                             </Button>
                         </form>
                     </CardContent>
