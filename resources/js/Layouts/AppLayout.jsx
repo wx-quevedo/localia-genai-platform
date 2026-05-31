@@ -58,6 +58,12 @@ export default function AppLayout({ children }) {
                     >
                         Panel principal
                     </Link>
+                    <Link
+                        href="/servicios"
+                        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+                    >
+                        Servicios
+                    </Link>
 
                     {user?.role === 'admin' && (
                         <>
@@ -70,6 +76,12 @@ export default function AppLayout({ children }) {
                                 className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
                             >
                                 Invitaciones
+                            </Link>
+                            <Link
+                                href="/admin/servicios"
+                                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+                            >
+                                Servicios
                             </Link>
                         </>
                     )}

@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\InvitationController;
+use App\Http\Controllers\ServiceController;
+use App\Http\Controllers\Admin\ServiceController as AdminServiceController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -18,10 +20,25 @@ Route::post('/invitacion/{token}', [InvitationController::class, 'register']);
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', fn () => Inertia::render('Dashboard'))->name('dashboard');
 
+    // Servicios (usuarios autenticados)
+    Route::get('/servicios', [ServiceController::class, 'index'])->name('services.index');
+    Route::get('/servicios/{slug}', [ServiceController::class, 'show'])->name('services.show');
+
     // Solo admin
     Route::middleware('admin')->group(function () {
         Route::get('/admin/invitaciones', [InvitationController::class, 'index'])->name('admin.invitaciones');
         Route::post('/admin/invitaciones', [InvitationController::class, 'store']);
         Route::delete('/admin/invitaciones/{id}', [InvitationController::class, 'destroy']);
+    });
+
+    // Admin — servicios
+    Route::middleware('admin')->prefix('admin')->group(function () {
+        Route::get('/servicios', [AdminServiceController::class, 'index'])->name('admin.services.index');
+        Route::get('/servicios/crear', [AdminServiceController::class, 'create'])->name('admin.services.create');
+        Route::post('/servicios', [AdminServiceController::class, 'store'])->name('admin.services.store');
+        Route::get('/servicios/{id}/editar', [AdminServiceController::class, 'edit'])->name('admin.services.edit');
+        Route::put('/servicios/{id}', [AdminServiceController::class, 'update'])->name('admin.services.update');
+        Route::delete('/servicios/{id}', [AdminServiceController::class, 'destroy'])->name('admin.services.destroy');
+        Route::patch('/servicios/{id}/toggle', [AdminServiceController::class, 'toggleActive'])->name('admin.services.toggle');
     });
 });
