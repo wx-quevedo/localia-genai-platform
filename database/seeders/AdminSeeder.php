@@ -11,9 +11,9 @@ class AdminSeeder extends Seeder
     public function run(): void
     {
         User::updateOrCreate(
-            ['email' => 'admin@localia.cc'],
+            ['email' => 'wxquevedo@inmersoft.com'],
             [
-                'name'      => 'Administrador',
+                'name'      => 'Washington X. Quevedo',
                 'password'  => Hash::make('***REMOVED***'),
                 'role'      => 'admin',
                 'is_active' => true,
