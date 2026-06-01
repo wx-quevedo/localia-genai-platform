@@ -9,74 +9,89 @@ use Illuminate\Console\Command;
 class ListenWorkerResults extends Command
 {
     protected $signature   = 'worker:listen-results';
-    protected $description = 'Escucha resultados del worker Python en Redis';
+    protected $description = 'Escucha resultados del worker Python via BLPOP en Redis';
 
     public function handle(): void
     {
         $host     = env('REDIS_HOST', '127.0.0.1');
         $port     = (int) env('REDIS_PORT', 6379);
         $password = env('REDIS_PASSWORD') ?: null;
-        $database = (int) env('REDIS_DB', 0);
-        $channel  = env('REDIS_PREFIX', 'localia-database-') . 'localia:results';
+        $channel  = 'localia-database-localia:results';
 
-        $this->info("[worker:listen-results] Conectando a {$host}:{$port}...");
+        $this->info("[worker:listen-results] Iniciando. Canal: {$channel}");
 
+        $redis = $this->makeConnection($host, $port, $password);
+
+        while (true) {
+            try {
+                $result = $redis->blpop([$channel], 30);
+
+                if (!$result) {
+                    continue;
+                }
+
+                $this->processMessage($result[1]);
+
+            } catch (\RedisException $e) {
+                $this->error('Redis error: ' . $e->getMessage() . ' — reconectando...');
+                sleep(2);
+                $redis = $this->makeConnection($host, $port, $password);
+
+            } catch (\Throwable $e) {
+                $this->error('Error: ' . $e->getMessage());
+                sleep(1);
+            }
+        }
+    }
+
+    private function makeConnection(string $host, int $port, ?string $password): \Redis
+    {
         $redis = new \Redis();
-
-        // pconnect mantiene la conexión persistente; sin timeout (0)
-        $redis->pconnect($host, $port, 0);
+        $redis->connect($host, $port, 5);
+        $redis->setOption(\Redis::OPT_READ_TIMEOUT, -1);
 
         if ($password) {
             $redis->auth($password);
         }
 
-        if ($database !== 0) {
-            $redis->select($database);
+        $this->info('[worker:listen-results] Conectado a Redis OK');
+
+        return $redis;
+    }
+
+    private function processMessage(string $message): void
+    {
+        $payload = json_decode($message, true, 512, JSON_THROW_ON_ERROR);
+
+        $uuid = $payload['job_uuid'] ?? null;
+        if (!$uuid) {
+            return;
         }
 
-        // subscribe() de phpredis bloquea indefinidamente hasta que la
-        // conexión se cierre; es la solución más robusta para un listener
-        // de larga duración bajo Supervisor.
-        $this->info("[worker:listen-results] Suscrito a {$channel}");
+        $job = UserJob::where('uuid', $uuid)->first();
+        if (!$job) {
+            $this->warn("Job no encontrado: {$uuid}");
+            return;
+        }
 
-        $redis->subscribe([$channel], function (\Redis $redis, string $chan, string $message) {
-            try {
-                $payload = json_decode($message, true, 512, JSON_THROW_ON_ERROR);
+        $status = (string) ($payload['status']   ?? 'processing');
+        $stage  = (string) ($payload['stage']    ?? '');
+        $pct    = (int)    ($payload['progress'] ?? 0);
 
-                $uuid = $payload['job_uuid'] ?? null;
-                if (! $uuid) {
-                    return;
-                }
+        match ($status) {
+            'completed' => $job->markAsCompleted(
+                isset($payload['result_url'])  ? (string) $payload['result_url']  : null,
+                isset($payload['result_type']) ? (string) $payload['result_type'] : null,
+                isset($payload['result_data']) ? (string) $payload['result_data'] : null,
+            ),
+            'failed' => $job->markAsFailed(
+                (string) ($payload['error_message'] ?? 'Error desconocido')
+            ),
+            default => $job->updateProgress($pct, $stage ?: null),
+        };
 
-                $job = UserJob::where('uuid', $uuid)->first();
-                if (! $job) {
-                    $this->warn('Job no encontrado: ' . (string) $uuid);
-                    return;
-                }
+        JobProgressUpdated::dispatch($job, $stage);
 
-                $status = (string) ($payload['status']   ?? 'processing');
-                $stage  = (string) ($payload['stage']    ?? '');
-                $pct    = (int)    ($payload['progress'] ?? 0);
-
-                match ($status) {
-                    'completed' => $job->markAsCompleted(
-                        isset($payload['result_url'])  ? (string) $payload['result_url']  : null,
-                        isset($payload['result_type']) ? (string) $payload['result_type'] : null,
-                        isset($payload['result_data']) ? (string) $payload['result_data'] : null,
-                    ),
-                    'failed'    => $job->markAsFailed(
-                        (string) ($payload['error_message'] ?? 'Error desconocido')
-                    ),
-                    default     => $job->updateProgress($pct, $stage ?: null),
-                };
-
-                JobProgressUpdated::dispatch($job, $stage);
-
-                $this->line("[{$uuid}] status={$status} progress={$pct}% stage={$stage}");
-            } catch (\Throwable $e) {
-                $this->error('Error procesando mensaje: ' . $e->getMessage());
-                // No relanzar — el loop debe continuar
-            }
-        });
+        $this->line("[{$uuid}] status={$status} progress={$pct}% stage={$stage}");
     }
 }
