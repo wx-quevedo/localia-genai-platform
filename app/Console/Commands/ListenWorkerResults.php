@@ -5,7 +5,7 @@ namespace App\Console\Commands;
 use App\Events\JobProgressUpdated;
 use App\Models\UserJob;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Redis;
+use Predis\Client as PredisClient;
 
 class ListenWorkerResults extends Command
 {
@@ -16,8 +16,19 @@ class ListenWorkerResults extends Command
     {
         $this->info('[worker:listen-results] Escuchando canal localia:results...');
 
-        // subscribe() bloquea indefinidamente — ideal para Supervisor
-        Redis::subscribe(['localia:results'], function (string $message) {
+        $client = new PredisClient([
+            'scheme'   => 'tcp',
+            'host'     => env('REDIS_HOST', '127.0.0.1'),
+            'port'     => (int) env('REDIS_PORT', 6379),
+            'password' => env('REDIS_PASSWORD') ?: null,
+            'database' => (int) env('REDIS_DB', 0),
+        ], [
+            'read_write_timeout' => 0, // sin timeout — conexión persistente
+        ]);
+
+        $channel = env('REDIS_PREFIX', 'localia-database-') . 'localia:results';
+
+        $client->subscribe([$channel], function (PredisClient $redis, string $chan, string $message) {
             try {
                 $payload = json_decode($message, true, flags: JSON_THROW_ON_ERROR);
 
@@ -32,9 +43,9 @@ class ListenWorkerResults extends Command
                     return;
                 }
 
-                $status  = $payload['status']        ?? 'processing';
-                $stage   = $payload['stage']          ?? '';
-                $pct     = (int) ($payload['progress'] ?? 0);
+                $status = $payload['status']   ?? 'processing';
+                $stage  = $payload['stage']    ?? '';
+                $pct    = (int) ($payload['progress'] ?? 0);
 
                 match ($status) {
                     'completed' => $job->markAsCompleted(
