@@ -5,7 +5,6 @@ namespace App\Console\Commands;
 use App\Events\JobProgressUpdated;
 use App\Models\UserJob;
 use Illuminate\Console\Command;
-use Predis\Client as PredisClient;
 
 class ListenWorkerResults extends Command
 {
@@ -14,46 +13,45 @@ class ListenWorkerResults extends Command
 
     public function handle(): void
     {
-        $this->info('[worker:listen-results] Iniciando conexión Predis...');
+        $host     = env('REDIS_HOST', '127.0.0.1');
+        $port     = (int) env('REDIS_PORT', 6379);
+        $password = env('REDIS_PASSWORD') ?: null;
+        $database = (int) env('REDIS_DB', 0);
+        $channel  = env('REDIS_PREFIX', 'localia-database-') . 'localia:results';
 
-        $client = new PredisClient([
-            'scheme'   => 'tcp',
-            'host'     => env('REDIS_HOST', '127.0.0.1'),
-            'port'     => (int) env('REDIS_PORT', 6379),
-            'password' => env('REDIS_PASSWORD') ?: null,
-            'database' => (int) env('REDIS_DB', 0),
-        ], [
-            'read_write_timeout' => 0, // sin timeout — conexión persistente
-        ]);
+        $this->info("[worker:listen-results] Conectando a {$host}:{$port}...");
 
-        $channel = env('REDIS_PREFIX', 'localia-database-') . 'localia:results';
+        $redis = new \Redis();
 
-        // pubSubLoop() devuelve un Consumer iterable (API correcta de Predis 3.x).
-        // El callback-based subscribe() pasaba el array raw de Redis como tercer
-        // parámetro, causando "Array to string conversion" en json_decode().
-        $pubsub = $client->pubSubLoop();
-        $pubsub->subscribe($channel);
+        // pconnect mantiene la conexión persistente; sin timeout (0)
+        $redis->pconnect($host, $port, 0);
 
+        if ($password) {
+            $redis->auth($password);
+        }
+
+        if ($database !== 0) {
+            $redis->select($database);
+        }
+
+        // subscribe() de phpredis bloquea indefinidamente hasta que la
+        // conexión se cierre; es la solución más robusta para un listener
+        // de larga duración bajo Supervisor.
         $this->info("[worker:listen-results] Suscrito a {$channel}");
 
-        foreach ($pubsub as $message) {
-            // Filtrar confirmaciones de suscripción (kind = 'subscribe')
-            if ($message->kind !== 'message') {
-                continue;
-            }
-
+        $redis->subscribe([$channel], function (\Redis $redis, string $chan, string $message) {
             try {
-                $payload = json_decode($message->payload, true, 512, JSON_THROW_ON_ERROR);
+                $payload = json_decode($message, true, 512, JSON_THROW_ON_ERROR);
 
                 $uuid = $payload['job_uuid'] ?? null;
                 if (! $uuid) {
-                    continue;
+                    return;
                 }
 
                 $job = UserJob::where('uuid', $uuid)->first();
                 if (! $job) {
                     $this->warn('Job no encontrado: ' . (string) $uuid);
-                    continue;
+                    return;
                 }
 
                 $status = (string) ($payload['status']   ?? 'processing');
@@ -79,6 +77,6 @@ class ListenWorkerResults extends Command
                 $this->error('Error procesando mensaje: ' . $e->getMessage());
                 // No relanzar — el loop debe continuar
             }
-        }
+        });
     }
 }
