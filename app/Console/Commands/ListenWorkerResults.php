@@ -14,7 +14,7 @@ class ListenWorkerResults extends Command
 
     public function handle(): void
     {
-        $this->info('[worker:listen-results] Escuchando canal localia:results...');
+        $this->info('[worker:listen-results] Iniciando conexión Predis...');
 
         $client = new PredisClient([
             'scheme'   => 'tcp',
@@ -28,33 +28,46 @@ class ListenWorkerResults extends Command
 
         $channel = env('REDIS_PREFIX', 'localia-database-') . 'localia:results';
 
-        $client->subscribe([$channel], function (PredisClient $redis, string $chan, string $message) {
+        // pubSubLoop() devuelve un Consumer iterable (API correcta de Predis 3.x).
+        // El callback-based subscribe() pasaba el array raw de Redis como tercer
+        // parámetro, causando "Array to string conversion" en json_decode().
+        $pubsub = $client->pubSubLoop();
+        $pubsub->subscribe($channel);
+
+        $this->info("[worker:listen-results] Suscrito a {$channel}");
+
+        foreach ($pubsub as $message) {
+            // Filtrar confirmaciones de suscripción (kind = 'subscribe')
+            if ($message->kind !== 'message') {
+                continue;
+            }
+
             try {
-                $payload = json_decode($message, true, flags: JSON_THROW_ON_ERROR);
+                $payload = json_decode($message->payload, true, 512, JSON_THROW_ON_ERROR);
 
                 $uuid = $payload['job_uuid'] ?? null;
                 if (! $uuid) {
-                    return;
+                    continue;
                 }
 
                 $job = UserJob::where('uuid', $uuid)->first();
                 if (! $job) {
-                    $this->warn("Job no encontrado: {$uuid}");
-                    return;
+                    $this->warn('Job no encontrado: ' . (string) $uuid);
+                    continue;
                 }
 
-                $status = $payload['status']   ?? 'processing';
-                $stage  = $payload['stage']    ?? '';
-                $pct    = (int) ($payload['progress'] ?? 0);
+                $status = (string) ($payload['status']   ?? 'processing');
+                $stage  = (string) ($payload['stage']    ?? '');
+                $pct    = (int)    ($payload['progress'] ?? 0);
 
                 match ($status) {
                     'completed' => $job->markAsCompleted(
-                        $payload['result_url']  ?? null,
-                        $payload['result_type'] ?? null,
-                        $payload['result_data'] ?? null,
+                        isset($payload['result_url'])  ? (string) $payload['result_url']  : null,
+                        isset($payload['result_type']) ? (string) $payload['result_type'] : null,
+                        isset($payload['result_data']) ? (string) $payload['result_data'] : null,
                     ),
                     'failed'    => $job->markAsFailed(
-                        $payload['error_message'] ?? 'Error desconocido'
+                        (string) ($payload['error_message'] ?? 'Error desconocido')
                     ),
                     default     => $job->updateProgress($pct, $stage ?: null),
                 };
@@ -66,6 +79,6 @@ class ListenWorkerResults extends Command
                 $this->error('Error procesando mensaje: ' . $e->getMessage());
                 // No relanzar — el loop debe continuar
             }
-        });
+        }
     }
 }
