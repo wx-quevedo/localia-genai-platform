@@ -47,8 +47,8 @@ class ListenWorkerResults extends Command
     private function makeConnection(string $host, int $port, ?string $password): \Redis
     {
         $redis = new \Redis();
-        $redis->connect($host, $port, 5);
-        $redis->setOption(\Redis::OPT_READ_TIMEOUT, -1);
+        $redis->connect($host, $port, 0);
+        $redis->setOption(\Redis::OPT_READ_TIMEOUT, 0);
 
         if ($password) {
             $redis->auth($password);
