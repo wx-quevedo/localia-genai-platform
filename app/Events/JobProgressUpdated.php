@@ -41,6 +41,8 @@ class JobProgressUpdated implements ShouldBroadcast
             'result_type'   => $this->job->result_type,
             'result_data'   => $this->job->result_data,
             'error_message' => $this->job->error_message,
+            'started_at'    => $this->job->started_at?->toDateTimeString(),
+            'completed_at'  => $this->job->completed_at?->toDateTimeString(),
         ];
     }
 }

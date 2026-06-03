@@ -7,7 +7,6 @@ use App\Models\Service;
 use App\Models\UserJob;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -44,19 +43,22 @@ class JobController extends Controller
 
         return Inertia::render('Jobs/Show', [
             'job' => [
-                'uuid'          => $job->uuid,
-                'status'        => $job->status,
-                'progress'      => $job->progress,
-                'current_stage' => $job->current_stage,
-                'result_url'    => $job->result_url,
-                'result_type'   => $job->result_type,
-                'result_data'   => $job->result_data,
-                'error_message' => $job->error_message,
-                'started_at'    => $job->started_at?->toDateTimeString(),
-                'completed_at'  => $job->completed_at?->toDateTimeString(),
-                'created_at'    => $job->created_at->toDateTimeString(),
-                'service_name'  => $job->service->name,
-                'service_slug'  => $job->service->slug,
+                'uuid'           => $job->uuid,
+                'status'         => $job->status,
+                'progress'       => $job->progress,
+                'current_stage'  => $job->current_stage,
+                'chat_history'   => $job->chat_history,
+                'inputs'         => $job->inputs,
+                'result_url'     => $job->result_url,
+                'result_type'    => $job->result_type,
+                'result_data'    => $job->result_data,
+                'error_message'  => $job->error_message,
+                'started_at'     => $job->started_at?->toDateTimeString(),
+                'completed_at'   => $job->completed_at?->toDateTimeString(),
+                'created_at'     => $job->created_at->toDateTimeString(),
+                'service_name'   => $job->service->name,
+                'service_slug'   => $job->service->slug,
+                'service_engine' => $job->service->engine,
             ],
         ]);
     }
@@ -66,7 +68,7 @@ class JobController extends Controller
         $service = Service::active()->where('slug', $slug)->with('inputs')->firstOrFail();
 
         // Validación dinámica según los inputs del servicio
-        $rules = [];
+        $rules = ['parent_job_uuid' => ['nullable', 'string', 'uuid']];
         foreach ($service->inputs as $input) {
             $rule = $input->required ? ['required'] : ['nullable'];
 
@@ -84,11 +86,19 @@ class JobController extends Controller
 
         $validated = $request->validate($rules);
 
+        // Construir historial de chat si existe un job padre
+        $chatHistory = $this->buildChatHistory(
+            $request->user()->id,
+            $validated['parent_job_uuid'] ?? null,
+            $validated['prompt'] ?? null,
+        );
+
         // Crear el UserJob para obtener el UUID antes de subir archivos
         $userJob = UserJob::create([
-            'user_id'    => $request->user()->id,
-            'service_id' => $service->id,
-            'status'     => 'pending',
+            'user_id'      => $request->user()->id,
+            'service_id'   => $service->id,
+            'status'       => 'pending',
+            'chat_history' => $chatHistory,
         ]);
 
         // Subir archivos y construir el mapa de inputs
@@ -114,5 +124,35 @@ class JobController extends Controller
 
         return redirect()->route('jobs.show', $userJob->uuid)
             ->with('success', 'Job enviado a la cola. El resultado aparecerá aquí cuando esté listo.');
+    }
+
+    private function buildChatHistory(int $userId, ?string $parentUuid, ?string $newPrompt): ?array
+    {
+        if ($parentUuid === null) {
+            // Primera conversación: iniciar con el mensaje del usuario
+            return $newPrompt ? [['role' => 'user', 'content' => $newPrompt]] : null;
+        }
+
+        $parent = UserJob::where('uuid', $parentUuid)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (! $parent) {
+            return $newPrompt ? [['role' => 'user', 'content' => $newPrompt]] : null;
+        }
+
+        $history = $parent->chat_history ?? [];
+
+        // Añadir respuesta del asistente del job padre si existe
+        if ($parent->result_data) {
+            $history[] = ['role' => 'assistant', 'content' => $parent->result_data];
+        }
+
+        // Añadir el nuevo mensaje del usuario
+        if ($newPrompt) {
+            $history[] = ['role' => 'user', 'content' => $newPrompt];
+        }
+
+        return $history;
     }
 }

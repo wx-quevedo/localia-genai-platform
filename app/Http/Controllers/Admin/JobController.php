@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Service;
 use App\Models\UserJob;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -46,5 +47,18 @@ class JobController extends Controller
             'services' => $services,
             'filters'  => $request->only(['status', 'service_id']),
         ]);
+    }
+
+    public function cancel(string $uuid): RedirectResponse
+    {
+        $job = UserJob::where('uuid', $uuid)->firstOrFail();
+
+        if (! in_array($job->status, ['pending', 'processing'])) {
+            return back()->with('error', 'Solo se pueden cancelar jobs en cola o en proceso.');
+        }
+
+        $job->markAsFailed('Cancelado por el administrador.');
+
+        return back()->with('success', 'Job cancelado correctamente.');
     }
 }

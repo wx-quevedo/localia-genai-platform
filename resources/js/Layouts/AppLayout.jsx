@@ -70,6 +70,12 @@ export default function AppLayout({ children }) {
                     >
                         Mis jobs
                     </Link>
+                    <Link
+                        href="/perfil"
+                        className="flex items-center gap-2 px-3 py-2 rounded-md text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+                    >
+                        Perfil
+                    </Link>
 
                     {user?.role === 'admin' && (
                         <>

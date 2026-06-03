@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\JobController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\Admin\JobController as AdminJobController;
 use App\Http\Controllers\Admin\ServiceController as AdminServiceController;
@@ -20,7 +21,20 @@ Route::post('/invitacion/{token}', [InvitationController::class, 'register']);
 
 // Autenticadas
 Route::middleware('auth')->group(function () {
-    Route::get('/dashboard', fn () => Inertia::render('Dashboard'))->name('dashboard');
+    Route::get('/dashboard', function (\Illuminate\Http\Request $req) {
+        $uid = $req->user()->id;
+        return Inertia::render('Dashboard', [
+            'stats' => [
+                'total'      => \App\Models\UserJob::where('user_id', $uid)->count(),
+                'completados'=> \App\Models\UserJob::where('user_id', $uid)->where('status', 'completed')->count(),
+                'en_proceso' => \App\Models\UserJob::where('user_id', $uid)->whereIn('status', ['pending', 'processing'])->count(),
+            ],
+        ]);
+    })->name('dashboard');
+
+    // Perfil
+    Route::get('/perfil', [ProfileController::class, 'show'])->name('profile.show');
+    Route::put('/perfil/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
 
     // Servicios (usuarios autenticados)
     Route::get('/servicios', [ServiceController::class, 'index'])->name('services.index');
@@ -41,6 +55,7 @@ Route::middleware('auth')->group(function () {
     // Admin — jobs
     Route::middleware('admin')->group(function () {
         Route::get('/admin/jobs', [AdminJobController::class, 'index'])->name('admin.jobs.index');
+        Route::patch('/admin/jobs/{uuid}/cancel', [AdminJobController::class, 'cancel'])->name('admin.jobs.cancel');
     });
 
     // Admin — servicios

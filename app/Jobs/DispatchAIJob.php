@@ -42,6 +42,7 @@ class DispatchAIJob implements ShouldQueue
                 'workflow_file'    => $service->workflow_file,
                 'inputs'           => $textInputs,
                 'files'            => $fileInputs,
+                'chat_history'     => $job->chat_history ?? [],
                 'callback_channel' => 'localia:results',
             ];
 

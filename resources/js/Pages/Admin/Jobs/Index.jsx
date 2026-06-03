@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Head, Link, router, usePage } from '@inertiajs/react'
 import AppLayout from '@/Layouts/AppLayout'
 import { Badge } from '@/components/ui/badge'
@@ -8,12 +9,18 @@ import {
     Table, TableBody, TableCell, TableHead,
     TableHeader, TableRow,
 } from '@/components/ui/table'
+import {
+    Dialog, DialogContent, DialogDescription,
+    DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import { Toaster } from '@/components/ui/sonner'
+import { toast } from 'sonner'
 
 const STATUS_CONFIG = {
-    pending:    { label: 'En cola',     className: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30' },
-    processing: { label: 'Procesando',  className: 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30' },
-    completed:  { label: 'Completado',  className: 'bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30' },
-    failed:     { label: 'Fallido',     className: 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30' },
+    pending:    { label: 'En cola',    className: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30' },
+    processing: { label: 'Procesando', className: 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30' },
+    completed:  { label: 'Completado', className: 'bg-green-500/15 text-green-700 dark:text-green-400 border-green-500/30' },
+    failed:     { label: 'Fallido',    className: 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30' },
 }
 
 const STATUS_OPTIONS = [
@@ -32,23 +39,61 @@ function formatDate(iso) {
     })
 }
 
+const canCancel = (status) => status === 'pending' || status === 'processing'
+
 export default function AdminJobsIndex({ jobs, services, filters }) {
+    const { flash } = usePage().props
+    const [cancelTarget, setCancelTarget] = useState(null) // uuid a cancelar
+
+    useEffect(() => {
+        if (flash?.success) toast.success(flash.success)
+        if (flash?.error)   toast.error(flash.error)
+    }, [flash])
+
     function applyFilter(key, value) {
         router.get('/admin/jobs', { ...filters, [key]: value || undefined }, {
             preserveState: true, replace: true,
         })
     }
 
+    function confirmCancel() {
+        if (!cancelTarget) return
+        router.patch(
+            `/admin/jobs/${cancelTarget}/cancel`,
+            {},
+            { preserveScroll: true, onFinish: () => setCancelTarget(null) },
+        )
+    }
+
     return (
         <AppLayout>
             <Head title="Jobs — Admin" />
+            <Toaster />
+
+            {/* Dialog de confirmación */}
+            <Dialog open={!!cancelTarget} onOpenChange={(o) => !o && setCancelTarget(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>¿Cancelar este job?</DialogTitle>
+                        <DialogDescription>
+                            El job se marcará como fallido. Esta acción no se puede deshacer.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setCancelTarget(null)}>
+                            Volver
+                        </Button>
+                        <Button variant="destructive" onClick={confirmCancel}>
+                            Sí, cancelar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <div className="space-y-6">
                 <div>
                     <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
-                    <p className="text-muted-foreground mt-1">
-                        Todos los jobs de todos los usuarios.
-                    </p>
+                    <p className="text-muted-foreground mt-1">Todos los jobs de todos los usuarios.</p>
                 </div>
 
                 {/* Filtros */}
@@ -75,18 +120,13 @@ export default function AdminJobsIndex({ jobs, services, filters }) {
                     </select>
 
                     {(filters.status || filters.service_id) && (
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => router.get('/admin/jobs', {}, { replace: true })}
-                        >
+                        <Button variant="ghost" size="sm"
+                            onClick={() => router.get('/admin/jobs', {}, { replace: true })}>
                             Limpiar filtros
                         </Button>
                     )}
 
-                    <span className="ml-auto text-sm text-muted-foreground">
-                        {jobs.total} jobs
-                    </span>
+                    <span className="ml-auto text-sm text-muted-foreground">{jobs.total} jobs</span>
                 </div>
 
                 <Card>
@@ -100,7 +140,7 @@ export default function AdminJobsIndex({ jobs, services, filters }) {
                                     <TableHead className="w-36">Progreso</TableHead>
                                     <TableHead>Inicio</TableHead>
                                     <TableHead>Fin</TableHead>
-                                    <TableHead className="w-16" />
+                                    <TableHead className="w-32" />
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -138,9 +178,20 @@ export default function AdminJobsIndex({ jobs, services, filters }) {
                                                     {formatDate(job.completed_at)}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Button variant="ghost" size="sm" asChild>
-                                                        <Link href={`/jobs/${job.uuid}`}>Ver</Link>
-                                                    </Button>
+                                                    <div className="flex items-center gap-1">
+                                                        <Button variant="ghost" size="sm" asChild>
+                                                            <Link href={`/jobs/${job.uuid}`}>Ver</Link>
+                                                        </Button>
+                                                        {canCancel(job.status) && (
+                                                            <Button
+                                                                variant="ghost" size="sm"
+                                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                                onClick={() => setCancelTarget(job.uuid)}
+                                                            >
+                                                                Cancelar
+                                                            </Button>
+                                                        )}
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
                                         )
@@ -156,22 +207,13 @@ export default function AdminJobsIndex({ jobs, services, filters }) {
                     <div className="flex items-center justify-center gap-2">
                         {jobs.links.map((link, i) => (
                             link.url ? (
-                                <Link
-                                    key={i}
-                                    href={link.url}
-                                    className={`px-3 py-1 rounded text-sm border transition-colors ${
-                                        link.active
-                                            ? 'bg-foreground text-background border-foreground'
-                                            : 'border-border hover:bg-accent'
-                                    }`}
+                                <Link key={i} href={link.url}
+                                    className={`px-3 py-1 rounded text-sm border transition-colors ${link.active ? 'bg-foreground text-background border-foreground' : 'border-border hover:bg-accent'}`}
                                     dangerouslySetInnerHTML={{ __html: link.label }}
                                 />
                             ) : (
-                                <span
-                                    key={i}
-                                    className="px-3 py-1 rounded text-sm border border-border text-muted-foreground"
-                                    dangerouslySetInnerHTML={{ __html: link.label }}
-                                />
+                                <span key={i} className="px-3 py-1 rounded text-sm border border-border text-muted-foreground"
+                                    dangerouslySetInnerHTML={{ __html: link.label }} />
                             )
                         ))}
                     </div>

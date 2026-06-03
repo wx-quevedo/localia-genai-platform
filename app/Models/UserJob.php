@@ -16,6 +16,7 @@ class UserJob extends Model
         'progress',
         'current_stage',
         'inputs',
+        'chat_history',
         'result_url',
         'result_type',
         'result_data',
@@ -28,6 +29,7 @@ class UserJob extends Model
     {
         return [
             'inputs'       => 'array',
+            'chat_history' => 'array',
             'started_at'   => 'datetime',
             'completed_at' => 'datetime',
         ];
