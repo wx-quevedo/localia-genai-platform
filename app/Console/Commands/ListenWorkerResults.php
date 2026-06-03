@@ -24,7 +24,7 @@ class ListenWorkerResults extends Command
 
         while (true) {
             try {
-                $result = $redis->blpop([$channel], 30);
+                $result = $redis->blpop([$channel], 5);
 
                 if (!$result) {
                     continue;
@@ -47,8 +47,8 @@ class ListenWorkerResults extends Command
     private function makeConnection(string $host, int $port, ?string $password): \Redis
     {
         $redis = new \Redis();
-        $redis->connect($host, $port, 0);
-        $redis->setOption(\Redis::OPT_READ_TIMEOUT, 0);
+        $redis->connect($host, $port, 300); // 5 min connection timeout
+        $redis->setOption(\Redis::OPT_READ_TIMEOUT, 10); // 10s read timeout
 
         if ($password) {
             $redis->auth($password);
