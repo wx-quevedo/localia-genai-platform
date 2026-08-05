@@ -6,6 +6,7 @@ use App\Models\UserJob;
 use App\Services\R2Service;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 
@@ -37,6 +38,11 @@ class DispatchAIJob implements ShouldQueue
         try {
             $job->markAsProcessing();
 
+            Log::info('[flux-debug] antes del bucle de subida', [
+                'uuid' => $job->uuid,
+                'file_inputs' => array_keys($fileInputs),
+            ]);
+
             // Subir cada archivo a R2 y reemplazarlo por su URL pública
             // (el worker de ComfyUI corre en una máquina remota sin acceso al disco local)
             $uploadedInputs = [];
@@ -47,7 +53,19 @@ class DispatchAIJob implements ShouldQueue
                 );
                 $uploadedInputs["{$key}_url"] = $url;
                 Storage::disk('local')->delete($relativePath);
+
+                Log::info('[flux-debug] archivo subido a R2', [
+                    'uuid' => $job->uuid,
+                    'key'  => $key,
+                    'url'  => $url,
+                ]);
             }
+
+            Log::info('[flux-debug] antes de armar payload', [
+                'uuid' => $job->uuid,
+                'text_inputs' => array_keys($textInputs),
+                'uploaded_inputs' => array_keys($uploadedInputs),
+            ]);
 
             $payload = [
                 'job_uuid'         => $job->uuid,
@@ -59,7 +77,14 @@ class DispatchAIJob implements ShouldQueue
                 'callback_channel' => 'localia:results',
             ];
 
+            Log::info('[flux-debug] antes de Redis::rpush', [
+                'uuid' => $job->uuid,
+                'payload_json' => json_encode($payload),
+            ]);
+
             Redis::rpush('localia:jobs', json_encode($payload));
+
+            Log::info('[flux-debug] despues de Redis::rpush', ['uuid' => $job->uuid]);
         } catch (\Throwable $e) {
             $job->markAsFailed($e->getMessage());
             throw $e;
