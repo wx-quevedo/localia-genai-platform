@@ -13,29 +13,36 @@ class ListenWorkerResults extends Command
 
     public function handle(): void
     {
-        $host     = env('REDIS_HOST', '127.0.0.1');
-        $port     = (int) env('REDIS_PORT', 6379);
-        $password = env('REDIS_PASSWORD') ?: null;
-        $channel  = 'localia-database-localia:results';
+        $host       = config('database.redis.default.host', '127.0.0.1');
+        $port       = (int) config('database.redis.default.port', 6379);
+        $password   = config('database.redis.default.password') ?: null;
+        $channel    = 'localia-database-localia:results';
+        $processing = $channel . ':processing';
 
         $this->info("[worker:listen-results] Iniciando. Canal: {$channel}");
 
         $redis = $this->makeConnection($host, $port, $password);
 
+        // Si el proceso murió a mitad de un mensaje la vez anterior, queda
+        // parado en la lista de procesamiento — lo recuperamos antes de seguir.
+        $this->recoverPending($redis, $processing);
+
         while (true) {
             try {
-                $result = $redis->blpop([$channel], 5);
+                $message = $redis->blmove($channel, $processing, 'LEFT', 'RIGHT', 5);
 
-                if (!$result) {
+                if ($message === false) {
                     continue;
                 }
 
-                $this->processMessage($result[1]);
+                $this->processMessage($message);
+                $redis->lRem($processing, $message, 1);
 
             } catch (\RedisException $e) {
                 $this->error('Redis error: ' . $e->getMessage() . ' — reconectando...');
                 sleep(2);
                 $redis = $this->makeConnection($host, $port, $password);
+                $this->recoverPending($redis, $processing);
 
             } catch (\Throwable $e) {
                 $this->error('Error: ' . $e->getMessage());
@@ -44,11 +51,21 @@ class ListenWorkerResults extends Command
         }
     }
 
+    private function recoverPending(\Redis $redis, string $processing): void
+    {
+        foreach ($redis->lRange($processing, 0, -1) as $message) {
+            $this->warn('[worker:listen-results] Reprocesando mensaje pendiente de una corrida anterior');
+            $this->processMessage($message);
+            $redis->lRem($processing, $message, 1);
+        }
+    }
+
     private function makeConnection(string $host, int $port, ?string $password): \Redis
     {
         $redis = new \Redis();
         $redis->connect($host, $port, 300); // 5 min connection timeout
         $redis->setOption(\Redis::OPT_READ_TIMEOUT, 10); // 10s read timeout
+        $redis->setOption(\Redis::OPT_TCP_KEEPALIVE, true); // detecta conexiones muertas por NAT/firewall
 
         if ($password) {
             $redis->auth($password);
