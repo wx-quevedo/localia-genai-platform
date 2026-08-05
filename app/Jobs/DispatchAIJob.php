@@ -3,9 +3,11 @@
 namespace App\Jobs;
 
 use App\Models\UserJob;
+use App\Services\R2Service;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Storage;
 
 class DispatchAIJob implements ShouldQueue
 {
@@ -16,7 +18,7 @@ class DispatchAIJob implements ShouldQueue
 
     public function __construct(public readonly UserJob $userJob) {}
 
-    public function handle(): void
+    public function handle(R2Service $r2): void
     {
         $job     = $this->userJob->fresh(['service.inputs']);
         $service = $job->service;
@@ -35,13 +37,24 @@ class DispatchAIJob implements ShouldQueue
         try {
             $job->markAsProcessing();
 
+            // Subir cada archivo a R2 y reemplazarlo por su URL pública
+            // (el worker de ComfyUI corre en una máquina remota sin acceso al disco local)
+            $uploadedInputs = [];
+            foreach ($fileInputs as $key => $relativePath) {
+                $url = $r2->upload(
+                    Storage::disk('local')->path($relativePath),
+                    "jobs/{$job->uuid}/input/" . basename($relativePath),
+                );
+                $uploadedInputs["{$key}_url"] = $url;
+                Storage::disk('local')->delete($relativePath);
+            }
+
             $payload = [
                 'job_uuid'         => $job->uuid,
                 'service_slug'     => $service->slug,
                 'engine'           => $service->engine,
                 'workflow_file'    => $service->workflow_file,
-                'inputs'           => $textInputs,
-                'files'            => $fileInputs,
+                'inputs'           => array_merge($textInputs, $uploadedInputs),
                 'chat_history'     => $job->chat_history ?? [],
                 'callback_channel' => 'localia:results',
             ];

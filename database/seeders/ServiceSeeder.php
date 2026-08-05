@@ -57,5 +57,40 @@ class ServiceSeeder extends Seeder
                 'sort_order'  => 0,
             ]
         );
+
+        $flux = Service::updateOrCreate(
+            ['slug' => 'generar-imagen-flux'],
+            [
+                'name'          => 'Generar imagen (FLUX 2 Klein)',
+                'description'   => 'Genera una imagen a partir de una imagen de referencia y un prompt',
+                'engine'        => 'comfyui',
+                'workflow_file' => 'flux2_klein.json',
+                'is_active'     => true,
+                'sort_order'    => 3,
+                'created_by'    => $admin->id,
+            ]
+        );
+
+        $flux->inputs()->updateOrCreate(
+            ['key' => 'image'],
+            [
+                'label'       => 'Imagen de referencia',
+                'type'        => 'image',
+                'required'    => true,
+                'help_text'   => 'Sube la imagen que quieres usar como referencia',
+                'sort_order'  => 0,
+            ]
+        );
+
+        $flux->inputs()->updateOrCreate(
+            ['key' => 'prompt'],
+            [
+                'label'       => 'Prompt',
+                'type'        => 'textarea',
+                'required'    => true,
+                'placeholder' => 'Describe el resultado que quieres generar...',
+                'sort_order'  => 1,
+            ]
+        );
     }
 }
