@@ -1,58 +1,135 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Localia GenAI Platform
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A self-hosted, invite-only web platform that turns locally run generative AI models (LM Studio for chat, ComfyUI for image generation) into configurable services that users launch from the browser, with real-time job progress.
 
-## About Laravel
+## What it does
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Running models on a local GPU machine is cheap and private, but it is hard to share with a team: there is no UI, no queue, no access control, and the GPU box is usually not reachable from the public web server. Localia sits between the users and that GPU machine:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- **Dynamic AI services**: admins define services (name, engine, ComfyUI workflow file, and a list of typed inputs such as text, textarea, image, video or file) without writing code. The launch form and its server-side validation are generated from that definition.
+- **Asynchronous job pipeline**: every request becomes a tracked job (pending, processing, completed, failed) that is queued and handed to a remote Python worker over Redis.
+- **Real-time progress**: the worker reports stage and percentage; the browser receives updates over WebSockets (Laravel Reverb) without polling or refreshing.
+- **Continuous chat**: chat jobs can reference a parent job, so the conversation history (user and assistant turns) is carried forward to the LLM.
+- **Object storage hand-off**: uploaded inputs and generated results are stored in Cloudflare R2 (S3-compatible), so the GPU worker never needs access to the web server disk.
+- **Access control**: invitation-only registration (emailed, expiring tokens), user and admin roles, admin pages to manage services, invitations and jobs (including cancelling jobs).
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Architecture
 
-## Learning Laravel
+```mermaid
+flowchart LR
+    U[Browser<br/>React + Inertia] -->|HTTP| W[Laravel app<br/>controllers + Inertia pages]
+    U <-->|WebSocket<br/>private channel jobs.uuid| RV[Laravel Reverb]
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+    W -->|create UserJob| DB[(SQL database)]
+    W -->|dispatch DispatchAIJob| Q[Laravel queue]
+    Q -->|upload input files| R2[(Cloudflare R2)]
+    Q -->|RPUSH localia:jobs| RD[(Redis)]
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+    RD -->|pop job| PW[Python GPU worker<br/>external, not in this repo]
+    PW --> LM[LM Studio<br/>chat]
+    PW --> CU[ComfyUI<br/>image workflows]
+    PW -->|POST /api/upload-result<br/>X-Worker-Token| W
+    W -->|store result| R2
+    PW -->|progress / result<br/>RPUSH localia:results| RD
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+    RD -->|BLMOVE| L[artisan worker:listen-results<br/>long-running, supervised]
+    L -->|update status| DB
+    L -->|JobProgressUpdated<br/>ShouldBroadcastNow| RV
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+How a request flows:
 
-## Contributing
+1. A user submits a service form. `JobController@store` builds validation rules from the service's input definitions, creates a `UserJob` (with chat history if it continues a previous job) and dispatches `DispatchAIJob`.
+2. `DispatchAIJob` uploads any file inputs to R2, replaces them with public URLs, and pushes a JSON payload (engine, workflow file, inputs, chat history, callback channel) onto the `localia:jobs` Redis list.
+3. An external Python worker on the GPU machine runs the job against LM Studio or ComfyUI. Large outputs (images, video) are sent to the token-protected endpoint `POST /api/upload-result`, which stores them in R2 and returns a URL.
+4. The worker pushes progress and final results to `localia:results`. The `worker:listen-results` Artisan command consumes that list, updates the job and fires `JobProgressUpdated`, which Reverb delivers to the job's private channel. The channel is authorized only for the job owner or an admin.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+`docs/supervisor-localia-listener.conf` is a Supervisor template to keep the listener running in production.
 
-## Code of Conduct
+## Tech stack
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+- **Backend**: PHP 8.3, Laravel 13, Inertia.js (server adapter), Laravel Reverb (WebSockets), Laravel Horizon, Redis (phpredis / predis)
+- **Frontend**: React 19, Inertia.js, Vite, Tailwind CSS 4, shadcn/ui (Base UI), Laravel Echo + pusher-js, lucide-react, sonner
+- **Storage**: SQLite or MySQL via Eloquent; Cloudflare R2 through the Flysystem S3 adapter (AWS SDK for PHP)
+- **AI engines** (driven by the external worker): LM Studio, ComfyUI (including a FLUX.2 Klein image-to-image workflow)
+- **Ops**: Supervisor for the long-running Redis listener
 
-## Security Vulnerabilities
+## Running locally
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### Requirements
 
-## License
+- PHP 8.3+ with the `redis` (phpredis) extension, Composer
+- Node.js and npm
+- Redis on `localhost:6379`
+- A Cloudflare R2 bucket (or another S3-compatible store) for file inputs and results
+- To actually execute jobs: a compatible Python worker connected to LM Studio and/or ComfyUI (not included in this repository). Without it, the web app, auth, services admin and job creation still work, but jobs stay in `processing`.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### Configuration
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+- `ADMIN_PASSWORD`: required. `AdminSeeder` throws an error if it is empty; it is used to create the initial admin account.
+- `APP_NAME=localia`: the Redis key prefix is derived from `APP_NAME`, and the listener reads from `localia-database-localia:results`, so keep this value (or set `REDIS_PREFIX=localia-database-`).
+- Queue and Redis: `QUEUE_CONNECTION` (database or redis) and `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`.
+- Add the variables that are read by the config but not yet listed in `.env.example`:
+
+```dotenv
+BROADCAST_CONNECTION=reverb
+REVERB_APP_ID=local-app
+REVERB_APP_KEY=local-key
+REVERB_APP_SECRET=local-secret
+REVERB_HOST=localhost
+REVERB_PORT=8080
+REVERB_SCHEME=http
+
+VITE_REVERB_APP_KEY="${REVERB_APP_KEY}"
+VITE_REVERB_HOST="${REVERB_HOST}"
+VITE_REVERB_PORT="${REVERB_PORT}"
+VITE_REVERB_SCHEME="${REVERB_SCHEME}"
+
+CLOUDFLARE_R2_ACCESS_KEY_ID=your-key
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=your-secret
+CLOUDFLARE_R2_BUCKET=your-bucket
+CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+CLOUDFLARE_R2_URL=https://your-public-bucket-url
+
+WORKER_SECRET_TOKEN=change-me   # shared secret sent by the worker as X-Worker-Token
+```
+
+### Commands
+
+```bash
+composer install
+npm install
+php artisan key:generate
+touch database/database.sqlite        # when using SQLite
+php artisan migrate --seed            # creates the admin user and three sample services
+
+# in separate terminals
+php artisan serve                     # http://localhost:8000
+php artisan queue:work                # runs DispatchAIJob
+php artisan reverb:start              # WebSocket server on localhost:8080
+php artisan worker:listen-results     # consumes worker results from Redis
+npm run dev                           # Vite dev server
+```
+
+Log in at `http://localhost:8000` with the admin account, then invite users from the admin area. Mail uses the `log` driver by default, so invitation links appear in `storage/logs/laravel.log`.
+
+## What I learned / key technical decisions
+
+- **Decoupling the web app from the GPU machine.** I made Redis lists the only contract between Laravel and the Python worker, and moved every file through R2 instead of the local disk. The web server and the GPU box never need to share a filesystem or open inbound ports to each other.
+- **At-least-once delivery for worker results.** I started with Redis pub/sub and then `BLPOP`, and found that a message is lost if the listener drops the connection right after the pop. I switched to `BLMOVE` into a processing list, removing the message only after it has been handled, recovering leftovers on restart, and enabling TCP keepalive to detect dead connections behind NAT.
+- **Broadcasting synchronously for live progress.** With `ShouldBroadcast` the progress event became just another queued job, so the UI looked connected but never updated when the queue worker was idle. Moving `JobProgressUpdated` to `ShouldBroadcastNow` sends it straight to Reverb from the listener.
+- **Data-driven services instead of hard-coded endpoints.** Services and their inputs live in the database, and the request validation rules (file, image, video MIME types, text length) are generated from those definitions, so adding a new ComfyUI workflow is an admin task, not a code change.
+- **Production details that only show up across processes.** I had to make the local disk write files with group-readable permissions so the queue worker (a different OS user from PHP-FPM) could read uploads, and I moved the admin seed password out of the code into `ADMIN_PASSWORD`.
+
+## Author
+
+**Washington Quevedo**
+
+- LinkedIn: https://www.linkedin.com/in/wxquevedo
+- GitHub: https://github.com/wx-quevedo
