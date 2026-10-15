@@ -72,33 +72,11 @@ cp .env.example .env
 
 Then edit `.env`:
 
+- `ADMIN_EMAIL`: email of the initial admin account.
 - `ADMIN_PASSWORD`: required. `AdminSeeder` throws an error if it is empty; it is used to create the initial admin account.
-- `APP_NAME=localia`: the Redis key prefix is derived from `APP_NAME`, and the listener reads from `localia-database-localia:results`, so keep this value (or set `REDIS_PREFIX=localia-database-`).
+- `APP_NAME=localia` (already set in `.env.example`): the Redis key prefix is derived from `APP_NAME`, and the listener reads from `localia-database-localia:results`, so keep this value (or set `REDIS_PREFIX=localia-database-`).
 - Queue and Redis: `QUEUE_CONNECTION` (database or redis) and `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`.
-- Add the variables that are read by the config but not yet listed in `.env.example`:
-
-```dotenv
-BROADCAST_CONNECTION=reverb
-REVERB_APP_ID=local-app
-REVERB_APP_KEY=local-key
-REVERB_APP_SECRET=local-secret
-REVERB_HOST=localhost
-REVERB_PORT=8080
-REVERB_SCHEME=http
-
-VITE_REVERB_APP_KEY="${REVERB_APP_KEY}"
-VITE_REVERB_HOST="${REVERB_HOST}"
-VITE_REVERB_PORT="${REVERB_PORT}"
-VITE_REVERB_SCHEME="${REVERB_SCHEME}"
-
-CLOUDFLARE_R2_ACCESS_KEY_ID=your-key
-CLOUDFLARE_R2_SECRET_ACCESS_KEY=your-secret
-CLOUDFLARE_R2_BUCKET=your-bucket
-CLOUDFLARE_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-CLOUDFLARE_R2_URL=https://your-public-bucket-url
-
-WORKER_SECRET_TOKEN=change-me   # shared secret sent by the worker as X-Worker-Token
-```
+- Fill in the Reverb, Cloudflare R2 and `WORKER_SECRET_TOKEN` values in `.env` (all are listed in `.env.example`).
 
 ### Commands
 

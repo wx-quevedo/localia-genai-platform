@@ -10,6 +10,12 @@ class AdminSeeder extends Seeder
 {
     public function run(): void
     {
+        $email = env('ADMIN_EMAIL');
+
+        if (blank($email)) {
+            throw new \RuntimeException('Define ADMIN_EMAIL en .env antes de correr AdminSeeder.');
+        }
+
         $password = env('ADMIN_PASSWORD');
 
         if (blank($password)) {
@@ -17,7 +23,7 @@ class AdminSeeder extends Seeder
         }
 
         User::updateOrCreate(
-            ['email' => 'wxquevedo@inmersoft.com'],
+            ['email' => $email],
             [
                 'name'      => 'Washington X. Quevedo',
                 'password'  => Hash::make($password),
